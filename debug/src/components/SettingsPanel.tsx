@@ -6,6 +6,7 @@ import {
   RuntimeProviderLogo,
   type RuntimeProvider,
 } from "../lib/branding.js";
+import { BrowserSection } from "./BrowserSection.js";
 
 type RuntimeChoice = "claude" | "codex";
 type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -157,7 +158,7 @@ export function SettingsPanel({ isDark }: { isDark: boolean }) {
           Agent Settings
         </h2>
         <span className={`text-xs mono ${muted}`}>
-          {RUNTIME_SETTING_COUNT} setting(s)
+          {RUNTIME_SETTING_COUNT} primary
         </span>
         <SettingsRuntimeBadge isDark={isDark} />
       </div>
@@ -171,6 +172,7 @@ export function SettingsPanel({ isDark }: { isDark: boolean }) {
             <TimezoneRow key={s.key} setting={s} isDark={isDark} />
           ),
         )}
+        <BrowserSection isDark={isDark} />
       </div>
     </div>
   );

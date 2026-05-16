@@ -16,6 +16,8 @@ import { createComposioRouter } from "./composio-routes.js";
 import { ensureProactiveWatcher } from "./proactive-email.js";
 import { preloadLocalModel } from "./embeddings.js";
 import { createMemoryRouter } from "./memory-routes.js";
+import { createBrowserRouter } from "./browser-routes.js";
+import { closeLocalBrowser } from "./browser/launcher.js";
 import {
   getRuntimeConfig,
   resolveModelInput,
@@ -124,6 +126,7 @@ async function main() {
   app.use("/sendblue", createSendblueRouter());
   app.use("/composio", createComposioRouter());
   app.use("/memory", createMemoryRouter());
+  app.use("/browser", createBrowserRouter());
 
   app.post("/agents/:id/cancel", (req, res) => {
     const ok = cancelAgent(req.params.id);
@@ -187,6 +190,14 @@ async function main() {
     console.log(`  sendblue    POST http://localhost:${port}/sendblue/webhook`);
     console.log(`  websocket   WS   ws://localhost:${port}/ws`);
   });
+
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.on(sig, () => {
+      closeLocalBrowser()
+        .catch(() => undefined)
+        .finally(() => process.exit(0));
+    });
+  }
 }
 
 main().catch((err) => {

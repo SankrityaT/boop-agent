@@ -366,8 +366,9 @@ async function main() {
 What this does:
   1. Pulls your Sendblue keys (via their CLI, or you paste them)
   2. Asks whether Boop should use your Claude Code or Codex subscription
-  3. Runs \`npx convex dev\` to create a Convex project
-  4. Writes .env.local
+  3. Optionally enables local browser use
+  4. Runs \`npx convex dev\` to create a Convex project
+  5. Writes .env.local
 
 Before you start:
   • Claude Code subscription if choosing Claude: https://claude.com/code
@@ -410,7 +411,7 @@ Before you start:
       type: "text",
       name: "SENDBLUE_FROM_NUMBER",
       message:
-        "Your Sendblue-provisioned number (the one people text TO, e.g. +14695551234). Required by Sendblue.",
+        "Your Sendblue-provisioned number (the one people text TO, e.g. +1XXXXXXXXXX). Required by Sendblue.",
       initial: "",
     });
   }
@@ -647,6 +648,60 @@ so you can switch later by adding/removing the API key.
     }
   }
 
+  // ---- Local browser use ---------------------------------------------------
+  banner("Local browser use — optional");
+  console.log(`
+Boop can optionally expose a local Patchright Chrome profile to spawned agents.
+Use it for login-required services, visual browser workflows, or sites that
+reject ordinary automation. It is off by default, and agents cannot see or use
+the browser integration unless you enable it.
+`);
+
+  const { enableLocalBrowser } = await prompts(
+    {
+      type: "confirm",
+      name: "enableLocalBrowser",
+      message: "Enable Local browser use now?",
+      initial: existing.BOOP_BROWSER_ENABLED === "true",
+    },
+    {
+      onCancel: () => {
+        console.log("Setup cancelled.");
+        process.exit(1);
+      },
+    },
+  );
+  (answers as any).BOOP_BROWSER_ENABLED = enableLocalBrowser ? "true" : "false";
+
+  if (enableLocalBrowser) {
+    const { installBrowser } = await prompts(
+      {
+        type: "confirm",
+        name: "installBrowser",
+        message: "Install the Patchright Chrome browser binary now?",
+        initial: false,
+      },
+      {
+        onCancel: () => {
+          console.log("Setup cancelled.");
+          process.exit(1);
+        },
+      },
+    );
+    if (installBrowser) {
+      console.log("\nInstalling Patchright Chrome… (Ctrl+C to skip)\n");
+      try {
+        await runInherit("npx", ["-y", "patchright", "install", "chrome"]);
+        console.log("✓ Patchright Chrome installed.");
+      } catch (err) {
+        console.warn(
+          "Patchright Chrome install failed — you can retry from Settings later.",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+  }
+
   // ---- Tunnel configuration ------------------------------------------------
   banner("Tunnel — public URL for Sendblue to reach your server");
   console.log(`
@@ -821,6 +876,12 @@ Integrations (via Composio):
   2. Open the debug dashboard → Connections tab.
   3. Click Connect on any toolkit (Gmail, Slack, GitHub, Linear, Notion, …).
   4. Composio handles OAuth; the toolkit becomes available to the agent.
+
+Local browser use:
+  • Off by default unless you enabled it during setup or in Settings.
+  • Open the debug dashboard → Settings → Local browser use to toggle it.
+  • The Patchright Chrome binary is installed only if you opt in from setup
+    or click "Install Patchright Chrome" in the local browser settings.
 `);
 }
 

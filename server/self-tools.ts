@@ -5,8 +5,8 @@ import {
   listToolkitMeta,
   listToolsForToolkit,
 } from "./composio.js";
-import { availableIntegrations } from "./execution-agent.js";
 import { activeProvider as activeEmbeddingProvider } from "./embeddings.js";
+import { listEnabledIntegrations } from "./integrations/registry.js";
 import { createClaudeMcpServer } from "./runtimes/claude.js";
 import { defineRuntimeTool } from "./runtimes/tool.js";
 import { runtimeText, type RuntimeReasoningEffort, type RuntimeTool } from "./runtimes/types.js";
@@ -17,6 +17,7 @@ import {
   MODEL_ALIASES,
   RUNTIME_ALIASES,
   getRuntimeConfig,
+  getBrowserSettings,
   resolveModelInput,
   resolveRuntimeInput,
   setCodexReasoningEffort,
@@ -41,9 +42,10 @@ export function createSelfTools(): RuntimeTool[] {
       "Return Boop's runtime configuration: active provider, model, billing mode, user's timezone, current local time, loaded integrations, and basic env info. Use when the user asks what model/provider/runtime Boop is using, what time it is, what timezone is active, or anything about the agent itself.",
       {},
       async () => {
-        const integrations = availableIntegrations();
+        const integrations = (await listEnabledIntegrations()).map((i) => i.name);
         const tzInfo = await describeUserNow();
         const runtime = await getRuntimeConfig();
+        const browser = await getBrowserSettings();
         const config = {
           runtime: runtime.runtime,
           model: runtime.model,
@@ -58,6 +60,16 @@ export function createSelfTools(): RuntimeTool[] {
           currentLocalTime: tzInfo.now,
           integrationsLoaded: integrations,
           integrationCount: integrations.length,
+          browser: {
+            enabled: browser.enabled,
+            showUi: browser.showUi,
+            loginHandoffEnabled: browser.loginHandoffEnabled,
+            profileDir: browser.profileDir,
+            startUrl: browser.startUrl || null,
+            channel: browser.channel,
+            executablePath: browser.executablePath || null,
+            extraArgs: browser.extraArgs,
+          },
           composioEnabled: Boolean(process.env.COMPOSIO_API_KEY),
           embeddingsEnabled: true,
           embeddingsProvider: activeEmbeddingProvider(),
@@ -259,7 +271,7 @@ Use when the user says "use opus", "switch to sonnet", "use Codex mini", "make i
             account: c.accountLabel ?? c.accountEmail ?? c.alias ?? "(unknown)",
             id: c.connectionId,
           })),
-          availableForSpawn: availableIntegrations().includes(lower),
+          availableForSpawn: (await listEnabledIntegrations()).some((i) => i.name === lower),
         };
         if (includeTools) {
           result.tools = await listToolsForToolkit(lower);

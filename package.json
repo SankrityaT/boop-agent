@@ -40,6 +40,9 @@
     "ws": "^8.18.0",
     "zod": "^3.23.0"
   },
+  "optionalDependencies": {
+    "patchright": "^1.59.4"
+  },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
     "@types/cors": "^2.8.17",

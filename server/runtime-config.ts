@@ -1,12 +1,23 @@
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import type { RuntimeName, RuntimeReasoningEffort } from "./runtimes/types.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const RUNTIME_KEY = "runtime";
 const CLAUDE_MODEL_KEY = "model";
 const CODEX_MODEL_KEY = "codex_model";
 const CODEX_REASONING_EFFORT_KEY = "codex_reasoning_effort";
+const BROWSER_ENABLED_KEY = "browser_enabled";
+const BROWSER_PROFILE_DIR_KEY = "browser_profile_dir";
+const BROWSER_SHOW_UI_KEY = "browser_show_ui";
+const BROWSER_LOGIN_HANDOFF_KEY = "browser_login_handoff";
+const BROWSER_START_URL_KEY = "browser_start_url";
+const BROWSER_CHANNEL_KEY = "browser_channel";
+const BROWSER_EXECUTABLE_PATH_KEY = "browser_executable_path";
+const BROWSER_EXTRA_ARGS_KEY = "browser_extra_args";
 const CONFIG_TTL_MS = 30 * 1000;
+const BROWSER_CONFIG_TTL_MS = 5 * 1000;
 
 export interface RuntimeConfig {
   runtime: RuntimeName;
@@ -16,6 +27,21 @@ export interface RuntimeConfig {
 }
 
 let cachedConfig: { at: number; value: RuntimeConfig } | null = null;
+let cachedBrowserSettings: { at: number; value: BrowserSettings } | null = null;
+
+export interface BrowserSettings {
+  enabled: boolean;
+  profileDir: string;
+  showUi: boolean;
+  loginHandoffEnabled: boolean;
+  startUrl: string;
+  channel: string;
+  executablePath: string;
+  extraArgs: string[];
+}
+
+const DEFAULT_BROWSER_PROFILE_DIR = join(homedir(), ".boop", "browser-profile");
+const DEFAULT_BROWSER_CHANNEL = "chrome";
 
 export const RUNTIME_ALIASES: Record<string, RuntimeName> = {
   anthropic: "claude",
@@ -127,6 +153,27 @@ async function getSetting(key: string): Promise<string | null> {
   }
 }
 
+function settingBool(
+  stored: string | null,
+  envValue: string | undefined,
+  fallback: boolean,
+): boolean {
+  if (stored === "true") return true;
+  if (stored === "false") return false;
+  if (envValue === "1" || envValue === "true") return true;
+  if (envValue === "0" || envValue === "false") return false;
+  return fallback;
+}
+
+function parseExtraArgs(input: string | null): string[] {
+  if (!input) return [];
+  return input
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => line.startsWith("--"));
+}
+
 export async function getRuntimeConfig(): Promise<RuntimeConfig> {
   if (cachedConfig && Date.now() - cachedConfig.at < CONFIG_TTL_MS) {
     return cachedConfig.value;
@@ -187,4 +234,55 @@ export async function clearRuntimeModel(runtime?: RuntimeName): Promise<void> {
     key: targetRuntime === "codex" ? CODEX_MODEL_KEY : CLAUDE_MODEL_KEY,
   });
   cachedConfig = null;
+}
+
+export async function getBrowserSettings(): Promise<BrowserSettings> {
+  if (
+    cachedBrowserSettings &&
+    Date.now() - cachedBrowserSettings.at < BROWSER_CONFIG_TTL_MS
+  ) {
+    return cachedBrowserSettings.value;
+  }
+
+  const [
+    enabled,
+    profileDir,
+    showUi,
+    loginHandoff,
+    startUrl,
+    channel,
+    executablePath,
+    extraArgs,
+  ] = await Promise.all([
+    getSetting(BROWSER_ENABLED_KEY),
+    getSetting(BROWSER_PROFILE_DIR_KEY),
+    getSetting(BROWSER_SHOW_UI_KEY),
+    getSetting(BROWSER_LOGIN_HANDOFF_KEY),
+    getSetting(BROWSER_START_URL_KEY),
+    getSetting(BROWSER_CHANNEL_KEY),
+    getSetting(BROWSER_EXECUTABLE_PATH_KEY),
+    getSetting(BROWSER_EXTRA_ARGS_KEY),
+  ]);
+
+  const value: BrowserSettings = {
+    enabled: settingBool(enabled, process.env.BOOP_BROWSER_ENABLED, false),
+    profileDir:
+      profileDir?.trim() ||
+      process.env.BOOP_BROWSER_PROFILE_DIR?.trim() ||
+      DEFAULT_BROWSER_PROFILE_DIR,
+    showUi: settingBool(showUi, process.env.BOOP_BROWSER_SHOW_UI, true),
+    loginHandoffEnabled: settingBool(loginHandoff, process.env.BOOP_BROWSER_LOGIN_HANDOFF, false),
+    startUrl: startUrl?.trim() || process.env.BOOP_BROWSER_START_URL?.trim() || "",
+    channel: channel?.trim() || process.env.BOOP_BROWSER_CHANNEL?.trim() || DEFAULT_BROWSER_CHANNEL,
+    executablePath:
+      executablePath?.trim() || process.env.BOOP_BROWSER_EXECUTABLE_PATH?.trim() || "",
+    extraArgs: parseExtraArgs(extraArgs ?? process.env.BOOP_BROWSER_EXTRA_ARGS ?? null),
+  };
+
+  cachedBrowserSettings = { at: Date.now(), value };
+  return value;
+}
+
+export function clearBrowserSettingsCache(): void {
+  cachedBrowserSettings = null;
 }

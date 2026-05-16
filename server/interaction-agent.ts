@@ -3,7 +3,8 @@ import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { createMemoryTools } from "./memory/tools.js";
 import { extractAndStore } from "./memory/extract.js";
-import { availableIntegrations, spawnExecutionAgent } from "./execution-agent.js";
+import { spawnExecutionAgent } from "./execution-agent.js";
+import { listEnabledIntegrations } from "./integrations/registry.js";
 import { createAutomationTools } from "./automation-tools.js";
 import { createDraftDecisionTools } from "./draft-tools.js";
 import { createSelfTools } from "./self-tools.js";
@@ -148,6 +149,18 @@ with a specific integration, spawn_agent against it — the sub-agent has
 COMPOSIO_SEARCH_TOOLS and will return the real tool list. Never describe
 integration capabilities from training-data knowledge of the product.
 
+Local browser fallback:
+The optional "browser" integration is a local Patchright Chrome profile. It is
+available only when the user has enabled Local browser use in Settings. If the
+current message explicitly asks to use a local browser, Chrome, the browser
+integration, or says not to use Composio/native integrations, and "browser" is
+available below, spawn_agent with ["browser"] only. If "browser" is not
+available, tell the user to turn on Local browser use in Settings. Otherwise,
+prefer native integrations when they fit. Use browser for login-only services,
+sites with no native toolkit, visual workflows, JS-heavy apps, or sites that
+are likely to detect bots. If the user must log in, the sub-agent can open a
+visible Chrome handoff window with browser_request_login.
+
 Self-inspection (no spawn needed — answer instantly):
 When the user asks about Boop itself, pick the tool by intent:
 - Wants to know what model / config / time is currently in effect → get_config
@@ -241,9 +254,36 @@ export function resolveSpawnImageRefs(
   return selected && selected.length > 0 ? selected : inboundImageStorageIds;
 }
 
+function explicitlyRequestsBrowser(content: string): boolean {
+  const normalized = content.toLowerCase().replace(/\s+/g, " ");
+  return (
+    /\blocal browser\b/.test(normalized) ||
+    /\bbrowser integration\b/.test(normalized) ||
+    /\buse (?:a |the )?browser\b/.test(normalized) ||
+    /\buse chrome\b/.test(normalized) ||
+    /\bin chrome\b/.test(normalized) ||
+    /\bnot composio\b/.test(normalized) ||
+    /\bdon'?t use composio\b/.test(normalized) ||
+    /\bwithout composio\b/.test(normalized) ||
+    /\bnot (?:the )?(?:native )?integration\b/.test(normalized) ||
+    /\bdon'?t use (?:the )?(?:native )?integration\b/.test(normalized)
+  );
+}
+
+export function resolveSpawnIntegrations(
+  requested: string[],
+  available: string[],
+  content: string,
+): string[] {
+  if (available.includes("browser") && explicitlyRequestsBrowser(content)) {
+    return ["browser"];
+  }
+  return requested;
+}
+
 export async function handleUserMessage(opts: HandleOpts): Promise<string> {
   const turnId = randomId("turn");
-  const integrations = availableIntegrations();
+  const integrations = (await listEnabledIntegrations()).map((i) => i.name);
 
   const inboundRole = opts.kind === "proactive" ? "system" : "user";
   const inboundImageStorageIds = (opts.images ?? []).map((i) => i.storageId);
@@ -319,6 +359,27 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
     }
     return reply;
   }
+
+  if (
+    opts.kind !== "proactive" &&
+    explicitlyRequestsBrowser(opts.content) &&
+    !integrations.includes("browser")
+  ) {
+    const reply =
+      "Local browser use is off right now. Turn it on in Settings → Local browser use, then resend this and I can use Chrome on your machine.";
+    log("browser requested but disabled");
+    broadcast("assistant_message", { conversationId: opts.conversationId, content: reply });
+    if (opts.persistAssistantReply) {
+      await convex.mutation(api.messages.send, {
+        conversationId: opts.conversationId,
+        role: "assistant",
+        content: reply,
+        turnId,
+      });
+    }
+    return reply;
+  }
+
   const sendAck = async (message: string): Promise<void> => {
     const text = message.trim();
     if (!text) return;
@@ -398,9 +459,19 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
           args.imageRefs,
           spawnableImageStorageIds,
         );
+        const selectedIntegrations = resolveSpawnIntegrations(
+          args.integrations,
+          integrations,
+          opts.content,
+        ).filter((name) => integrations.includes(name));
+        if (selectedIntegrations.join(",") !== args.integrations.join(",")) {
+          log(
+            `forcing browser integration for explicit browser request (model requested: ${args.integrations.join(",") || "none"})`,
+          );
+        }
         const res = await spawnExecutionAgent({
           task: args.task,
-          integrations: args.integrations,
+          integrations: selectedIntegrations,
           conversationId: opts.conversationId,
           name: args.name,
           runtimeConfig,

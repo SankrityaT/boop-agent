@@ -53,6 +53,7 @@ Built on:
 - **Draft-and-send** — any external action stages a draft first; the agent only commits when the user confirms.
 - **Heartbeat + retry** — stuck agents auto-fail, debug dashboard can retry.
 - **Composio-powered integrations** — one API key unlocks 1000+ toolkits. Connect Gmail, Slack, GitHub, Linear, Notion, Drive, HubSpot, etc. with a click from the debug dashboard. Composio handles OAuth + token refresh.
+- **Optional local browser use** — when enabled in Settings, spawned agents can use a Patchright-backed Chrome profile for login-required services, visual workflows, or pages that reject ordinary automation.
 - **Debug dashboard** (React + Vite) with a Boop mascot — Dashboard (usage, known cost, tokens, agent status), Agents (timeline + integration logos), Automations, Memory (table + force-directed graph), Events, Connections.
 - **Convex** for persistence — real-time, typed, free tier.
 - **Uses your Claude Code or Codex/ChatGPT subscription** — choose during setup, with no separate provider API key required.
@@ -129,6 +130,8 @@ You need accounts for these. Keep the tabs open — setup will ask for credentia
 
 **Custom integrations welcome.** Composio covers the common catalog, but you're free to add your own MCP servers under `server/integrations/` and register them in `server/integrations/registry.ts` — the dispatcher treats them the same as Composio-backed ones (just named toolkits the execution agent can spawn against). Useful for in-house APIs, local tools, or anything Composio doesn't ship.
 
+**Local browser use is fully optional.** Boop can expose a local Chrome profile to spawned agents, but it is off by default. Enable it from the debug dashboard under **Settings → Local browser use** when you want browser automation for login-only services, visual workflows, or bot-wall-sensitive pages. The Patchright Chrome binary is installed only if you opt in during setup or click the install button in Settings.
+
 ---
 
 ## Quickstart
@@ -146,7 +149,7 @@ claude  # sign in, then Ctrl-C to exit
 npm install -g @openai/codex
 codex login
 
-# 3. Interactive setup — writes .env.local, creates Convex deployment
+# 3. Interactive setup — writes .env.local, creates Convex deployment, offers optional local browser use
 npm run setup
 
 # 4. Install ngrok (one-time) and authorize it
@@ -223,7 +226,7 @@ The banner will look like:
   🐶 Debug dashboard (click me):   http://localhost:5173
   🌐 Public URL:                   https://abc123.ngrok-free.app
   📮 Sendblue webhook (inbound):   https://abc123.ngrok-free.app/sendblue/webhook
-  📱 Text this Sendblue number:    +13053369541  (from a DIFFERENT phone)
+  📱 Text this Sendblue number:    <sendblue-number>  (from a DIFFERENT phone)
 ════════════════════════════════════════════════════════════════════
 ```
 
@@ -241,14 +244,14 @@ The banner will look like:
 When someone texts your Sendblue number, expect this sequence in your terminal:
 
 ```
-server │ [turn a3f21d] ← +14155551234: "what's on my calendar today?"
+server │ [turn a3f21d] ← <sender-number>: "what's on my calendar today?"
 server │ [turn a3f21d] tool: recall({"query":"calendar today"})
 server │ [turn a3f21d] tool: spawn_agent({"integrations":["google-calendar"],"task":"Pull today's events"})
 server │ [agent 9e82c1] spawn: google-calendar [google-calendar] — "Pull today's events"
 server │ [agent 9e82c1] tool: list_events
 server │ [agent 9e82c1] done (completed, 2.1s, in/out tokens 1234/567)
 server │ [turn a3f21d] → reply (3.4s, 140 chars): "Light day — just your 2pm with Sarah..."
-server │ [sendblue] → sent 140 chars to +14155551234
+server │ [sendblue] → sent 140 chars to <sender-number>
 ```
 
 Per-line anatomy:
@@ -310,6 +313,7 @@ Visit `http://localhost:5173` for the debug dashboard (chat, agents, memory, eve
 - **Memory** (`server/memory/`) handles writes, recall, post-turn extraction, and daily cleaning. Stored in Convex.
 - **Automations** (`server/automations.ts`) poll every 30s for due jobs, spawn an execution agent to run them, and push results back to the user.
 - **Integrations** are provided by [Composio](https://composio.dev/?utm_source=chris&utm_medium=youtube&utm_campaign=collab). The dispatcher names toolkits by slug (`spawn_agent(integrations: ["gmail"])`); `server/composio.ts` opens a toolkit-scoped Composio session per spawn and wraps its tools as an MCP server. No per-integration code to write.
+- **Local browser use** is a separate optional integration named `browser`. It appears to the dispatcher only after you enable it in Settings, and it controls a persistent local Chrome profile through Patchright.
 
 Deep dive: [ARCHITECTURE.md](./ARCHITECTURE.md). Adding your own tools: [INTEGRATIONS.md](./INTEGRATIONS.md).
 
@@ -389,6 +393,13 @@ Everything lives in `.env.local` (auto-created by `npm run setup`). See `.env.ex
 | `BOOP_MODEL` | no | Default `claude-sonnet-4-6`. Used as the fallback when no runtime override is set. The user can switch the model at runtime from iMessage ("use opus", "switch to sonnet") via the `set_model` self-tool — that override is stored in the Convex `settings` table and takes precedence over this env var. |
 | `BOOP_CODEX_MODEL` / `BOOP_CODEX_REASONING_EFFORT` | no | Codex defaults when `BOOP_RUNTIME=codex`. Defaults: `gpt-5.5` and `medium`. |
 | `BOOP_CODEX_AUTH_HOME` | no | Optional path to a Codex home containing `auth.json`; otherwise Boop uses the current `codex login` auth. |
+| `BOOP_BROWSER_ENABLED` | no | Fallback for Local browser use. Default `false`. Runtime settings in Convex take precedence once changed from the dashboard. |
+| `BOOP_BROWSER_PROFILE_DIR` | no | Persistent Chrome profile directory. Default `~/.boop/browser-profile`. |
+| `BOOP_BROWSER_SHOW_UI` | no | `true` opens a visible Chrome window; `false` runs hidden/headless. Default `true`. |
+| `BOOP_BROWSER_LOGIN_HANDOFF` | no | Enables the agent's login handoff tool. Default `false`. |
+| `BOOP_BROWSER_START_URL` | no | Optional URL to open when launching the local browser without an explicit URL. |
+| `BOOP_BROWSER_CHANNEL` / `BOOP_BROWSER_EXECUTABLE_PATH` | no | Chrome channel or explicit browser binary path for Patchright. Default channel `chrome`. |
+| `BOOP_BROWSER_EXTRA_ARGS` | no | Optional newline-separated Chrome flags. Only `--flag` lines are used. |
 | `BOOP_UPSTREAM_CHECK` | no | Set to `false` to disable the new-version banner on `npm run dev`. Default: on. |
 | `PORT` | no | Default `3456`. |
 | `PUBLIC_URL` | no | Base URL used in the Sendblue webhook. Composio handles its own OAuth callbacks on `platform.composio.dev`, so this is just for inbound iMessage. |
@@ -396,6 +407,24 @@ Everything lives in `.env.local` (auto-created by `npm run setup`). See `.env.ex
 | `COMPOSIO_API_KEY` | optional | Enables integrations. Without it, plain chat + memory + automations still work. Get one at [app.composio.dev/developers](https://app.composio.dev/developers?utm_source=chris&utm_medium=youtube&utm_campaign=collab). |
 | `COMPOSIO_USER_ID` | optional | Stable user id Composio keys connections under. Defaults to `boop-default`. |
 | `ANTHROPIC_API_KEY` | optional | Bypass the Claude Code subscription for the Claude runtime. |
+
+---
+
+## Local browser use
+
+Local browser use is for cases where a normal API integration or web fetch is the wrong tool: login-required portals, visual browser workflows, JavaScript-heavy apps, or services that may detect bot-like automation. It is deliberately opt-in.
+
+How it works:
+
+1. Open the debug dashboard → **Settings → Local browser use**.
+2. Turn on **Local browser use**. Until this is enabled, agents do not see the `browser` integration at all.
+3. Choose whether Chrome should be visible with **Show browser UI**. On means a Chrome window opens on your machine; off runs hidden/headless.
+4. Turn on **Spawn login instance** only when you want the agent to hand control to you for login or MFA. The agent will say: "I need you to log in first. I’ve spawned an instance on your machine."
+5. Use **Install Patchright Chrome** if Patchright has not installed its browser binary yet.
+
+The browser uses a persistent Chrome profile, so cookies and login state can carry across runs. Boop does not store third-party service passwords or OAuth tokens for this feature; those live in the local Chrome profile you choose. Settings are stored in Convex under the `settings` table, with `.env.local` values used only as fallbacks.
+
+For Codex runtime, local browser tools are exposed internally under the `local_browser` namespace to avoid Codex's reserved browser namespace. The user-facing integration name remains `browser`.
 
 ---
 
@@ -441,7 +470,7 @@ Key properties:
 - **Toolkit slug = integration name.** `spawn_agent(integrations: ["linear"])` works for any toolkit you've connected. Unknown slugs just log a warning and are skipped.
 - **No tokens on our side.** Every tool call runs through Composio's proxy. If Composio goes down, integrations go down — but your server never holds user OAuth tokens.
 - **Multi-account per toolkit.** Connect a second Gmail (work + personal) — each gets its own connection row you can alias. The dispatcher picks up all active connections for the slug.
-- **Identity resolution.** Connection cards show the real account email (e.g. `chris@aloa.co`) resolved by calling the toolkit's own "who am I" tool through Composio (`GMAIL_GET_PROFILE`, etc.). Alias per connection if you want a friendlier label.
+- **Identity resolution.** Connection cards show the real account email (e.g. `user@example.com`) resolved by calling the toolkit's own "who am I" tool through Composio (`GMAIL_GET_PROFILE`, etc.). Alias per connection if you want a friendlier label.
 
 ### Adding toolkits beyond the curated list
 
@@ -500,8 +529,12 @@ boop-agent/
 │   ├── embeddings.ts              # Voyage / OpenAI wrapper
 │   ├── composio.ts                # Composio SDK wrapper (session + toolkit scoping)
 │   ├── composio-routes.ts         # /composio/* HTTP routes for the Debug UI
+│   ├── browser-routes.ts          # /browser/* HTTP routes for Local browser use
 │   ├── broadcast.ts               # WS fanout
 │   ├── convex-client.ts           # Convex HTTP client
+│   ├── browser/
+│   │   ├── launcher.ts            # Patchright Chrome launch/status/actions
+│   │   └── tools.ts               # Local browser runtime/MCP tools
 │   ├── runtimes/
 │   │   ├── claude.ts              # Claude Agent SDK adapter
 │   │   ├── codex-app-server.ts    # Codex app-server adapter
@@ -513,6 +546,7 @@ boop-agent/
 │   │   └── clean.ts               # Decay + archive + prune
 │   └── integrations/
 │       ├── registry.ts            # Integration loader
+│       ├── browser-loader.ts      # Registers optional Local browser use
 │       └── composio-loader.ts     # Registers each connected Composio toolkit
 ├── convex/
 │   ├── schema.ts
@@ -606,6 +640,11 @@ Every release lists additions under [CHANGELOG.md](./CHANGELOG.md), with `[BREAK
 - Check `COMPOSIO_API_KEY` is set in `.env.local`.
 - Check the toolkit shows as **Connected** in the Connections tab.
 - Watch server logs for `[composio] registered …` at boot and `[integrations] unknown integration: …` on spawn attempts.
+
+**Agent says Local browser use is off.**
+- Open the debug dashboard → **Settings → Local browser use** and turn it on. Agents cannot see or use the `browser` integration while it is disabled.
+- If launch fails, click **Install Patchright Chrome** in that same section, then try **Launch** again.
+- If you need to log in manually, also turn on **Spawn login instance** so the agent can open a visible handoff window.
 
 **I want to skip Sendblue for now.**
 - The server exposes `POST /chat` with `{ conversationId, content }` — curl or a tiny client can drive the agent directly, no iMessage required.
