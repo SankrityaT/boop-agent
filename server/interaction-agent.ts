@@ -151,15 +151,15 @@ integration capabilities from training-data knowledge of the product.
 
 Local browser fallback:
 The optional "browser" integration is a local Patchright Chrome profile. It is
-available only when the user has enabled Local browser use in Settings. If the
-current message explicitly asks to use a local browser, Chrome, the browser
-integration, or says not to use Composio/native integrations, and "browser" is
-available below, spawn_agent with ["browser"] only. If "browser" is not
-available, tell the user to turn on Local browser use in Settings. Otherwise,
-prefer native integrations when they fit. Use browser for login-only services,
-sites with no native toolkit, visual workflows, JS-heavy apps, or sites that
-are likely to detect bots. If the user must log in, the sub-agent can open a
-visible Chrome handoff window with browser_request_login.
+available only when the user has enabled Local browser use in Settings. Force
+["browser"] only for explicit local-browser intent: "local browser", "local
+Chrome", "Patchright", "browser integration", "Chrome instance", or a
+browser/Chrome request combined with "not Composio" / "not native integration".
+If "browser" is not available, tell the user to turn on Local browser use in
+Settings. Otherwise, prefer native integrations when they fit. Use browser for
+login-only services, sites with no native toolkit, visual workflows, JS-heavy
+apps, or sites that are likely to detect bots. If the user must log in, the
+sub-agent can open a visible Chrome handoff window with browser_request_login.
 
 Self-inspection (no spawn needed — answer instantly):
 When the user asks about Boop itself, pick the tool by intent:
@@ -256,18 +256,23 @@ export function resolveSpawnImageRefs(
 
 function explicitlyRequestsBrowser(content: string): boolean {
   const normalized = content.toLowerCase().replace(/\s+/g, " ");
-  return (
+  const directBrowserIntent =
     /\blocal browser\b/.test(normalized) ||
+    /\blocal chrome\b/.test(normalized) ||
+    /\bpatchright\b/.test(normalized) ||
     /\bbrowser integration\b/.test(normalized) ||
-    /\buse (?:a |the )?browser\b/.test(normalized) ||
-    /\buse chrome\b/.test(normalized) ||
-    /\bin chrome\b/.test(normalized) ||
-    /\bnot composio\b/.test(normalized) ||
-    /\bdon'?t use composio\b/.test(normalized) ||
-    /\bwithout composio\b/.test(normalized) ||
-    /\bnot (?:the )?(?:native )?integration\b/.test(normalized) ||
-    /\bdon'?t use (?:the )?(?:native )?integration\b/.test(normalized)
-  );
+    /\bchrome instance\b/.test(normalized) ||
+    /\bbrowser instance\b/.test(normalized) ||
+    /\bchrome on (?:my|your|the user'?s) machine\b/.test(normalized) ||
+    /\bbrowser on (?:my|your|the user'?s) machine\b/.test(normalized) ||
+    /\bspawn (?:a |the )?(?:chrome|browser)\b/.test(normalized);
+  const antiNative =
+    /\b(?:not|without|don'?t use|do not use) composio\b/.test(normalized) ||
+    /\b(?:not|without|don'?t use|do not use) (?:the )?(?:native |api )?integrations?\b/.test(
+      normalized,
+    );
+  const browserMention = /\b(?:browser|chrome)\b/.test(normalized);
+  return directBrowserIntent || (antiNative && browserMention);
 }
 
 export function resolveSpawnIntegrations(
@@ -464,7 +469,11 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
           integrations,
           opts.content,
         ).filter((name) => integrations.includes(name));
-        if (selectedIntegrations.join(",") !== args.integrations.join(",")) {
+        const browserForced =
+          selectedIntegrations.length === 1 &&
+          selectedIntegrations[0] === "browser" &&
+          !args.integrations.includes("browser");
+        if (browserForced) {
           log(
             `forcing browser integration for explicit browser request (model requested: ${args.integrations.join(",") || "none"})`,
           );

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { homedir, platform, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { BrowserContext, Page } from "patchright";
@@ -11,11 +11,15 @@ import {
 
 const require = createRequire(import.meta.url);
 const SCREENSHOT_DIR = join(tmpdir(), "boop-browser-screenshots");
+const BROWSER_CLOSE_TIMEOUT_MS = 2_000;
+const BROWSER_INSTALL_TIMEOUT_MS = 5 * 60_000;
+const MAX_BROWSER_SCREENSHOTS = 20;
 type PatchrightModule = typeof import("patchright");
 
 let context: BrowserContext | null = null;
 let activePage: Page | null = null;
 let launchPromise: Promise<LaunchResult> | null = null;
+let installPromise: Promise<InstallResult> | null = null;
 let activeSignature = "";
 let launchedAt: number | null = null;
 let patchrightPromise: Promise<PatchrightModule> | null = null;
@@ -43,6 +47,12 @@ export interface BrowserStatus {
   activeUrl: string | null;
 }
 
+export interface InstallResult {
+  ok: boolean;
+  exitCode: number | null;
+  output: string;
+}
+
 export interface LaunchOptions {
   url?: string;
   forceVisible?: boolean;
@@ -60,10 +70,15 @@ function normalizeUrl(input: string): string {
   if (!trimmed) return "about:blank";
   const withScheme = /^(https?:|about:)/i.test(trimmed) ? trimmed : `https://${trimmed}`;
   const parsed = new URL(withScheme);
-  if (!["http:", "https:", "about:"].includes(parsed.protocol)) {
+  const isAboutBlank =
+    parsed.protocol === "about:" &&
+    parsed.pathname.toLowerCase() === "blank" &&
+    !parsed.search &&
+    !parsed.hash;
+  if (!["http:", "https:"].includes(parsed.protocol) && !isAboutBlank) {
     throw new Error("Browser URL must be http(s) or about:blank.");
   }
-  return parsed.toString();
+  return isAboutBlank ? "about:blank" : parsed.toString();
 }
 
 function detectChromePath(): string | null {
@@ -130,6 +145,47 @@ async function getUsablePage(): Promise<Page> {
   return activePage;
 }
 
+function getExistingPage(): Page | null {
+  if (activePage && !activePage.isClosed()) return activePage;
+  if (!context) return null;
+  activePage = context.pages().find((page) => !page.isClosed()) ?? null;
+  return activePage;
+}
+
+function shouldReplayLaunchOptions(options: LaunchOptions): boolean {
+  return (
+    options.url !== undefined ||
+    options.forceVisible === true ||
+    options.relaunch === true
+  );
+}
+
+async function closeContextWithTimeout(current: BrowserContext): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    current.close().catch(() => undefined),
+    new Promise<void>((resolveTimeout) => {
+      timeout = setTimeout(() => {
+        console.warn(
+          `[browser] close timed out after ${BROWSER_CLOSE_TIMEOUT_MS}ms; continuing.`,
+        );
+        resolveTimeout();
+      }, BROWSER_CLOSE_TIMEOUT_MS);
+    }),
+  ]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
+async function closeActiveContext(): Promise<void> {
+  const current = context;
+  context = null;
+  activePage = null;
+  activeSignature = "";
+  launchedAt = null;
+  if (current) await closeContextWithTimeout(current);
+}
+
 export function selectorFor(input: string): string {
   const trimmed = input.trim();
   const refMatch =
@@ -143,7 +199,10 @@ export function selectorFor(input: string): string {
 export async function launchLocalBrowser(
   options: LaunchOptions = {},
 ): Promise<LaunchResult> {
-  if (launchPromise) return launchPromise;
+  if (launchPromise) {
+    const result = await launchPromise;
+    return shouldReplayLaunchOptions(options) ? await launchLocalBrowser(options) : result;
+  }
 
   launchPromise = (async () => {
     const settings = await getBrowserSettings();
@@ -161,7 +220,7 @@ export async function launchLocalBrowser(
       return browserLaunchResult(settings, showUi, page.url());
     }
 
-    if (context) await closeLocalBrowser();
+    if (context) await closeActiveContext();
 
     const profileDir = resolve(expandHome(settings.profileDir));
     mkdirSync(profileDir, { recursive: true });
@@ -223,7 +282,7 @@ function browserLaunchResult(
 
 export async function getBrowserStatus(): Promise<BrowserStatus> {
   const settings = await getBrowserSettings();
-  const page = context ? await getUsablePage().catch(() => null) : null;
+  const page = getExistingPage();
   return {
     running: Boolean(context),
     patchrightVersion: patchrightVersion(),
@@ -235,16 +294,13 @@ export async function getBrowserStatus(): Promise<BrowserStatus> {
 }
 
 export async function closeLocalBrowser(): Promise<void> {
-  const current = context;
-  context = null;
-  activePage = null;
-  activeSignature = "";
-  launchedAt = null;
-  if (current) await current.close().catch(() => undefined);
+  const inFlightLaunch = launchPromise;
+  if (inFlightLaunch) await inFlightLaunch.catch(() => undefined);
+  await closeActiveContext();
 }
 
 export async function currentPage(): Promise<Page> {
-  await launchLocalBrowser();
+  if (!context) await launchLocalBrowser();
   return await getUsablePage();
 }
 
@@ -289,24 +345,51 @@ export async function browserUrl(): Promise<string> {
 
 export async function browserScreenshot(): Promise<string> {
   const page = await currentPage();
-  mkdirSync(SCREENSHOT_DIR, { recursive: true });
+  mkdirSync(SCREENSHOT_DIR, { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(SCREENSHOT_DIR, 0o700);
+    const existing = readdirSync(SCREENSHOT_DIR)
+      .filter((file) => file.startsWith("boop-browser-") && file.endsWith(".png"))
+      .sort();
+    const removeCount = Math.max(0, existing.length - (MAX_BROWSER_SCREENSHOTS - 1));
+    for (const oldFile of existing.slice(0, removeCount)) {
+      unlinkSync(join(SCREENSHOT_DIR, oldFile));
+    }
+  } catch {
+    // Screenshot rotation is best-effort; capture should still proceed.
+  }
   const path = join(SCREENSHOT_DIR, `boop-browser-${Date.now()}.png`);
   await page.screenshot({ path, fullPage: false });
   return path;
 }
 
-export async function installPatchrightChrome(): Promise<{
-  ok: boolean;
-  exitCode: number | null;
-  output: string;
-}> {
+export async function installPatchrightChrome(): Promise<InstallResult> {
+  if (installPromise) return installPromise;
   const command = process.platform === "win32" ? "npx.cmd" : "npx";
-  return await new Promise((resolveInstall) => {
+  installPromise = new Promise((resolveInstall) => {
     const child = spawn(command, ["-y", "patchright", "install", "chrome"], {
       cwd: process.cwd(),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout>;
+    const finish = (result: InstallResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolveInstall(result);
+    };
+    timeout = setTimeout(() => {
+      child.kill();
+      const detail = [
+        output.trim().slice(-4000),
+        `Install timed out after ${Math.round(BROWSER_INSTALL_TIMEOUT_MS / 1000)} seconds.`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      finish({ ok: false, exitCode: null, output: detail });
+    }, BROWSER_INSTALL_TIMEOUT_MS);
     child.stdout.on("data", (chunk) => {
       output += chunk.toString();
     });
@@ -314,14 +397,19 @@ export async function installPatchrightChrome(): Promise<{
       output += chunk.toString();
     });
     child.on("error", (err) => {
-      resolveInstall({ ok: false, exitCode: null, output: err.message });
+      finish({ ok: false, exitCode: null, output: err.message });
     });
     child.on("exit", (code) => {
-      resolveInstall({
+      finish({
         ok: code === 0,
         exitCode: code,
         output: output.trim().slice(-4000),
       });
     });
   });
+  try {
+    return await installPromise;
+  } finally {
+    installPromise = null;
+  }
 }

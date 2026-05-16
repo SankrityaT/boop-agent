@@ -165,13 +165,17 @@ function settingBool(
   return fallback;
 }
 
-function parseExtraArgs(input: string | null): string[] {
+export function parseExtraArgs(input: string | null): string[] {
   if (!input) return [];
   return input
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
     .filter((line) => line.startsWith("--"));
+}
+
+export function parseEnvExtraArgs(input: string | undefined): string[] {
+  return parseExtraArgs(input?.replace(/[ \t]+/g, "\n") ?? null);
 }
 
 export async function getRuntimeConfig(): Promise<RuntimeConfig> {
@@ -276,7 +280,10 @@ export async function getBrowserSettings(): Promise<BrowserSettings> {
     channel: channel?.trim() || process.env.BOOP_BROWSER_CHANNEL?.trim() || DEFAULT_BROWSER_CHANNEL,
     executablePath:
       executablePath?.trim() || process.env.BOOP_BROWSER_EXECUTABLE_PATH?.trim() || "",
-    extraArgs: parseExtraArgs(extraArgs ?? process.env.BOOP_BROWSER_EXTRA_ARGS ?? null),
+    extraArgs:
+      extraArgs !== null
+        ? parseExtraArgs(extraArgs)
+        : parseEnvExtraArgs(process.env.BOOP_BROWSER_EXTRA_ARGS),
   };
 
   cachedBrowserSettings = { at: Date.now(), value };

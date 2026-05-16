@@ -47,6 +47,20 @@ function extractAccounts(input: unknown): string[] {
   return [...accounts];
 }
 
+function isBrowserFillTool(toolName: string): boolean {
+  const shortName = toolName.split("__").pop() ?? toolName;
+  return shortName === "browser_fill";
+}
+
+export function redactToolInputForLog(toolName: string, input: unknown): unknown {
+  if (!isBrowserFillTool(toolName)) return input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  return {
+    ...(input as Record<string, unknown>),
+    text: "[redacted]",
+  };
+}
+
 const EXECUTION_SYSTEM = `You are a focused background worker for the user.
 
 Your job:
@@ -188,12 +202,13 @@ export async function spawnExecutionAgent(opts: SpawnExecutionAgentOpts): Promis
         const accounts = extractAccounts(input);
         const acctSuffix = accounts.length ? ` [${accounts.join(", ")}]` : "";
         logAgent(`tool: ${toolShort}${acctSuffix}`);
+        const logInput = redactToolInputForLog(toolName, input);
         await convex.mutation(api.agents.addLog, {
           agentId,
           logType: "tool_use",
           toolName,
           ...(accounts.length ? { accounts } : {}),
-          content: JSON.stringify(input).slice(0, 2000),
+          content: JSON.stringify(logInput).slice(0, 2000),
         });
         broadcast("agent_tool", { agentId, toolName, accounts });
       },

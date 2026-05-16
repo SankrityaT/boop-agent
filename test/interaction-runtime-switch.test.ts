@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveDirectRuntimeSwitch } from "../server/interaction-agent.js";
+import {
+  resolveDirectRuntimeSwitch,
+  resolveSpawnIntegrations,
+} from "../server/interaction-agent.js";
 
 describe("direct runtime switching", () => {
   it("detects explicit Codex switch requests", () => {
@@ -22,5 +25,43 @@ describe("direct runtime switching", () => {
     expect(resolveDirectRuntimeSwitch("what model are you using")).toBeNull();
     expect(resolveDirectRuntimeSwitch("what is Codex?")).toBeNull();
     expect(resolveDirectRuntimeSwitch("can Codex see this image?")).toBeNull();
+  });
+});
+
+describe("local browser integration routing", () => {
+  const available = ["gmail", "browser"];
+
+  it("forces browser for explicit local-browser requests", () => {
+    expect(
+      resolveSpawnIntegrations(
+        ["gmail"],
+        available,
+        "Could you use a local browser and find the top Reddit comment?",
+      ),
+    ).toEqual(["browser"]);
+    expect(
+      resolveSpawnIntegrations(
+        ["gmail"],
+        available,
+        "Use Chrome on my machine, not Composio.",
+      ),
+    ).toEqual(["browser"]);
+  });
+
+  it("does not force browser for incidental browser or Chrome phrases", () => {
+    expect(
+      resolveSpawnIntegrations(
+        ["gmail"],
+        available,
+        "Use a browser extension summary from the email if there is one.",
+      ),
+    ).toEqual(["gmail"]);
+    expect(
+      resolveSpawnIntegrations(
+        ["gmail"],
+        available,
+        "Save this page in Chrome's reading list after you email it.",
+      ),
+    ).toEqual(["gmail"]);
   });
 });

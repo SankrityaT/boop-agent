@@ -191,11 +191,15 @@ async function main() {
     console.log(`  websocket   WS   ws://localhost:${port}/ws`);
   });
 
+  const signalExitCodes = { SIGTERM: 143, SIGINT: 130, SIGHUP: 129 } as const;
+  let shuttingDown = false;
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
     process.on(sig, () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
       closeLocalBrowser()
         .catch(() => undefined)
-        .finally(() => process.exit(0));
+        .finally(() => process.exit(signalExitCodes[sig]));
     });
   }
 }

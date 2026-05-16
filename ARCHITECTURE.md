@@ -167,10 +167,11 @@ Flow:
 1. The debug dashboard writes `browser_*` settings into Convex's `settings` table.
 2. `server/runtime-config.ts:getBrowserSettings()` reads those settings, falling back to `.env.local` values only when no runtime override exists.
 3. `server/integrations/browser-loader.ts` registers the integration with `isEnabled()`, so `listEnabledIntegrations()` exposes `browser` only when enabled.
-4. The dispatcher forces `spawn_agent(integrations: ["browser"])` when the user explicitly asks for local browser/Chrome or says not to use Composio/native integrations.
+4. The dispatcher forces `spawn_agent(integrations: ["browser"])` when the user explicitly asks for local browser/Chrome/Patchright, the browser integration, or combines a browser/Chrome request with "not Composio" / "not native integration".
 5. `server/browser/launcher.ts` lazily imports Patchright, launches a persistent Chrome profile, and reuses it across browser tool calls.
 
-HTTP routes (`server/browser-routes.ts`, mounted at `/browser`):
+HTTP routes (`server/browser-routes.ts`, mounted at `/browser`) are local-only. Requests with public `Host`, `X-Forwarded-Host`, or non-local `X-Forwarded-For` headers are rejected before any browser action runs.
+
 - `GET  /status` — current settings, Patchright version, detected Chrome path, active URL, running state.
 - `POST /launch` — launch/reuse the local browser with the saved or provided URL.
 - `POST /login` — force a visible browser and return the handoff message: "I need you to log in first. I’ve spawned an instance on your machine."
@@ -184,6 +185,7 @@ Runtime shape:
 
 Security model:
 - Boop does not store third-party passwords or OAuth tokens for local browser use. Browser cookies and sessions live in the chosen Chrome profile directory.
+- `browser_fill` redacts the typed value before tool-use arguments are written to Convex agent logs.
 - The feature is for login-required services, visual browser workflows, JS-heavy apps, and bot-wall-sensitive pages where native integrations or `WebFetch` are not enough.
 - The login handoff is separately gated by `browser_login_handoff`, so a user can allow browser automation without allowing agent-triggered login windows.
 

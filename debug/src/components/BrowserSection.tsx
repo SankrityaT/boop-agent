@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -56,6 +56,7 @@ export function BrowserSection({ isDark }: { isDark: boolean }) {
   const storedEnabled = useQuery(api.settings.get, { key: ENABLED_KEY });
   const startUrl = useQuery(api.settings.get, { key: START_URL_KEY });
   const [launchUrl, setLaunchUrl] = useState("");
+  const launchUrlInitialized = useRef(false);
   const setSetting = useMutation(api.settings.set);
 
   const enabled =
@@ -80,8 +81,10 @@ export function BrowserSection({ isDark }: { isDark: boolean }) {
   }, [refresh]);
 
   useEffect(() => {
-    if (!launchUrl && startUrl) setLaunchUrl(startUrl);
-  }, [launchUrl, startUrl]);
+    if (launchUrlInitialized.current || startUrl === undefined) return;
+    launchUrlInitialized.current = true;
+    if (startUrl) setLaunchUrl(startUrl);
+  }, [startUrl]);
 
   async function setLocalBrowserEnabled(nextEnabled: boolean) {
     setBusy("Enable");
@@ -121,7 +124,7 @@ export function BrowserSection({ isDark }: { isDark: boolean }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.ok === false) {
-        throw new Error(data.error ?? `${action} failed (${res.status})`);
+        throw new Error(data.error ?? data.output ?? `${action} failed (${res.status})`);
       }
       setMessage({
         tone: "ok",
@@ -602,17 +605,30 @@ function BrowserTextSetting({
   const clearSetting = useMutation(api.settings.clear);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (value !== undefined) setDraft(value ?? "");
-  }, [value]);
+    if (value !== undefined && !focused && !dirty) setDraft(value ?? "");
+  }, [dirty, focused, value]);
 
   async function save() {
     setSaving(true);
+    setSaveError(null);
     try {
       const trimmed = draft.trim();
-      if (trimmed) await setSetting({ key: settingKey, value: multiline ? draft : trimmed });
-      else await clearSetting({ key: settingKey });
+      if (trimmed) {
+        const nextValue = multiline ? draft : trimmed;
+        await setSetting({ key: settingKey, value: nextValue });
+        setDraft(nextValue);
+      } else {
+        await clearSetting({ key: settingKey });
+        setDraft("");
+      }
+      setDirty(false);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }
@@ -629,7 +645,13 @@ function BrowserTextSetting({
         {multiline ? (
           <textarea
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setDirty(true);
+              setSaveError(null);
+            }}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             placeholder={placeholder}
             disabled={loading || saving}
             rows={3}
@@ -638,7 +660,13 @@ function BrowserTextSetting({
         ) : (
           <input
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setDirty(true);
+              setSaveError(null);
+            }}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             placeholder={placeholder}
             disabled={loading || saving}
             className={inputClass(isDark, "w-full")}
@@ -661,6 +689,11 @@ function BrowserTextSetting({
             ? `${settingKey} = (default ${fallback})`
             : `${settingKey} = "${value}"`}
       </span>
+      {saveError && (
+        <span className={`text-[11px] ${isDark ? "text-rose-300" : "text-rose-600"}`}>
+          {saveError}
+        </span>
+      )}
     </label>
   );
 }

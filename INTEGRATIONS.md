@@ -63,6 +63,8 @@ Settings live under **Settings → Local browser use**:
 
 Boop does not store third-party passwords or OAuth tokens for this feature. Login state lives in the selected local Chrome profile.
 
+Browser control HTTP routes are local-only and reject public tunnel requests before launching, closing, installing, or inspecting Chrome. The `browser_fill` tool also redacts typed values before tool-use arguments are persisted to Convex logs.
+
 ---
 
 ## Curated toolkit list
