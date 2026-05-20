@@ -68,7 +68,7 @@ export default defineSchema({
     conversationId: v.optional(v.string()),
     name: v.string(),
     task: v.string(),
-    runtime: v.optional(v.union(v.literal("claude"), v.literal("codex"))),
+    runtime: v.optional(v.union(v.literal("claude"), v.literal("codex"), v.literal("groq"))),
     model: v.optional(v.string()),
     reasoningEffort: v.optional(v.string()),
     billingMode: v.optional(v.union(v.literal("api"), v.literal("codex-subscription"))),
@@ -112,7 +112,7 @@ export default defineSchema({
     turnId: v.optional(v.string()),
     agentId: v.optional(v.string()),
     runId: v.optional(v.string()),
-    runtime: v.optional(v.union(v.literal("claude"), v.literal("codex"))),
+    runtime: v.optional(v.union(v.literal("claude"), v.literal("codex"), v.literal("groq"))),
     billingMode: v.optional(v.union(v.literal("api"), v.literal("codex-subscription"))),
     model: v.string(),
     inputTokens: v.number(),
@@ -229,6 +229,23 @@ export default defineSchema({
     value: v.string(),
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
+
+  // Append-only log of every message the proactive engine sends. Used for
+  // cooldown enforcement, dedup ("did I already ping about this draft?"),
+  // and after-the-fact tuning of the silence-bias prompt. Indexed by
+  // userPhone since the engine targets exactly one phone today; if Boop
+  // ever goes multi-user the by_user index becomes the partition key.
+  proactiveSends: defineTable({
+    userPhone: v.string(),
+    conversationId: v.string(),
+    triggerKind: v.string(),
+    triggerRef: v.optional(v.string()),
+    messageContent: v.string(),
+    sentAt: v.number(),
+  })
+    .index("by_user", ["userPhone"])
+    .index("by_user_sent", ["userPhone", "sentAt"])
+    .index("by_kind", ["triggerKind"]),
 
   automationRuns: defineTable({
     runId: v.string(),

@@ -3,6 +3,9 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { addClient } from "./broadcast.js";
 import { createSendblueRouter } from "./sendblue.js";
 import { handleUserMessage } from "./interaction-agent.js";
@@ -11,6 +14,7 @@ import { startCleanupLoop } from "./memory/clean.js";
 import { startAutomationLoop } from "./automations.js";
 import { startHeartbeatLoop } from "./heartbeat.js";
 import { startConsolidationLoop } from "./consolidation.js";
+import { startProactiveEngineLoop } from "./proactive-engine.js";
 import { cancelAgent, retryAgent } from "./execution-agent.js";
 import { createComposioRouter } from "./composio-routes.js";
 import { ensureProactiveWatcher } from "./proactive-email.js";
@@ -35,6 +39,11 @@ async function main() {
   startHeartbeatLoop();
   startConsolidationLoop();
   startImageCleanup();
+  // Default OFF (settings.proactive_enabled = "true" to enable). When
+  // enabled, ticks every 30 min during awake hours and may send up to one
+  // iMessage per hour if the silence-biased LLM decides a signal is worth
+  // surfacing. See server/proactive-engine.ts.
+  startProactiveEngineLoop();
   // No-op when a paid embedding key is set; otherwise downloads/loads the
   // local BGE-large model in the background so the first user-facing
   // recall() doesn't pay the model-load cost.
@@ -53,6 +62,16 @@ async function main() {
 
   const app = express();
   app.use(cors());
+  // The dashboard uses /api/* paths in dev (vite proxy strips the prefix).
+  // In production we rewrite /api/* -> /* so the same routes work end-to-end.
+  app.use((req, _res, next) => {
+    if (req.url.startsWith("/api/")) {
+      req.url = req.url.slice(4);
+    } else if (req.url === "/api") {
+      req.url = "/";
+    }
+    next();
+  });
   // Composio webhook receiver must read raw bytes for HMAC verification, so
   // its body parser is mounted BEFORE the global express.json. Without this
   // ordering the JSON parser consumes the stream first and the raw buffer
@@ -173,6 +192,21 @@ async function main() {
       res.status(500).json({ error: String(err) });
     }
   });
+
+  // Serve the built debug dashboard from /dashboard if the build exists.
+  // Run `npm run build:debug` to produce these files. Skipped silently if
+  // not built so local `npm run dev` (which uses vite dev server) still works.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const dashboardDist = resolve(here, "..", "debug", "dist");
+  if (existsSync(dashboardDist)) {
+    app.use("/dashboard", express.static(dashboardDist));
+    // SPA fallback: any /dashboard/* path that isn't a real file falls back
+    // to index.html so client-side routing works.
+    app.get(/^\/dashboard(\/.*)?$/, (_req, res) => {
+      res.sendFile(resolve(dashboardDist, "index.html"));
+    });
+    console.log(`  dashboard   GET  http://localhost:PORT/dashboard`);
+  }
 
   const server = createServer(app);
   const wss = new WebSocketServer({ server, path: "/ws" });

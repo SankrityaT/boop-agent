@@ -55,6 +55,23 @@ export const recent = query({
   },
 });
 
+// All pending drafts older than the given threshold (in ms). Used by the
+// proactive engine to surface stale drafts Sanki hasn't sent or rejected.
+// Capped at 25 to keep the engine prompt bounded.
+export const pendingOlderThan = query({
+  args: { thresholdMs: v.number() },
+  handler: async (ctx, args) => {
+    const cutoff = Date.now() - args.thresholdMs;
+    const rows = await ctx.db
+      .query("drafts")
+      .order("desc")
+      .take(200);
+    return rows
+      .filter((d) => d.status === "pending" && d.createdAt <= cutoff)
+      .slice(0, 25);
+  },
+});
+
 export const setStatus = mutation({
   args: { draftId: v.string(), status: statusV },
   handler: async (ctx, args) => {
